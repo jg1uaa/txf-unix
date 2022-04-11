@@ -16,7 +16,9 @@ txf [ipv4-addr] [port] [(filename to send)]
 $
 ```
 
-### Example: Server (sender)
+### Example: Get file from server
+
+#### Server (sender)
 
 `[ipv4-addr]` is IPv4 address of server.
 
@@ -25,16 +27,12 @@ $
 Run server first, waiting for connection from client.
 
 ```
-$ txf 192.168.0.1 9999 output.img
-* server
-output.img, 268435456 byte
-connected from 192.168.0.2
-$
+$ txf 192.168.0.1 9999 sendfile
 ```
 
 After file transfer is completed, server will stop.
 
-### Example: Client (receiver)
+#### Client (receiver)
 
 `[ipv4-addr]` is IPv4 address of server.
 
@@ -43,12 +41,37 @@ After file transfer is completed, server will stop.
 
 ```
 $ txf 192.168.0.1 9999
-* client
-connected to 192.168.0.10
-output.img, 268435456 byte
-$ ls -l output.img
--rw-r--r--  1 uaa  users  268435456 Apr 10 09:58 output.img
-$
+```
+
+### Example: Put file to server
+
+#### Server (receiver)
+
+`[ipv4-addr]` is IPv4 address of server.
+
+`[port]` is negative port value.
+
+`[(filename to send)]` is *not* required.
+
+
+Run server first, waiting for connection from client.
+
+```
+$ txf 192.168.0.1 -9999
+```
+
+After file transfer is completed, server will stop.
+
+#### Client (sender)
+
+`[ipv4-addr]` is IPv4 address of server.
+
+`[port]` is negative port value.
+
+`[(filename to send)]` is required.
+
+```
+$ txf 192.168.0.1 -9999 sendfile
 ```
 
 ## Limitation
@@ -64,4 +87,3 @@ No plan to fix them.
 ## License
 
 WTFPL (http://www.wtfpl.net/)
-

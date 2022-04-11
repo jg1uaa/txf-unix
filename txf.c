@@ -23,6 +23,18 @@ struct txf_header {
 	char unused[3];
 } __attribute__((packed));
 
+struct txf_workingset {
+	void *(*init)(char *arg);
+	int (*process)(int d, void *handle);
+	void (*finish)(void *handle);
+};
+
+struct txf_tx_workarea {
+	FILE *fp;
+	long size;
+	struct txf_header h;
+};
+
 static ssize_t send_block(int d, void *buf, size_t size)
 {
 	size_t pos, wsize;
@@ -47,74 +59,6 @@ static ssize_t recv_block(int d, void *buf, size_t size)
 	return pos;
 }
 
-static int client(int fd, struct sockaddr_in *addr)
-{
-	FILE *fp;
-	int i, size, remain;
-	struct txf_header h;
-	char buf[BLOCKSIZE];
-
-	printf("* client\n");
-
-	/* connect to server */
-	if (connect(fd, (struct sockaddr *)addr, sizeof(*addr)) < 0) {
-		printf("client: connect\n");
-		goto fin0;
-	}
-
-	printf("connected to %s\n", inet_ntoa(addr->sin_addr));
-
-	/* receive header */
-	if (recv_block(fd, &h, sizeof(h)) < sizeof(h)) {
-		printf("client: recv_block (header)\n");
-		goto fin0;
-	}
-
-	if (ntohl(h.magic) != MAGIC_SEND) {
-		printf("client: invalid header\n");
-		goto fin0;
-	}
-
-	h.filename_term = '\0';
-	size = ntohl(h.filesize);
-
-	printf("%s, %d byte\n", h.filename, size);
-
-	/* receive file */
-	if ((fp = fopen(h.filename, "w")) == NULL) {
-		printf("client: fopen\n");
-		goto fin0;
-	}
-
-	for (i = 0; i < size; i += BLOCKSIZE) {
-		remain = size - i;
-		if (remain > BLOCKSIZE)
-			remain = BLOCKSIZE;
-
-		if (recv_block(fd, buf, remain) < remain) {
-			printf("client: recv_block (data)\n");
-			goto fin1;
-		}
-
-		if (fwrite(buf, remain, 1, fp) < 1) {
-			printf("client: fwrite\n");
-			goto fin1;
-		}
-	}
-
-	/* send ack */
-	h.magic = htonl(MAGIC_RCVD);
-	if (send_block(fd, &h, sizeof(h)) < sizeof(h)) {
-		printf("client: send_block (ack)\n");
-		goto fin1;
-	}
-
-fin1:
-	fclose(fp);
-fin0:
-	return 0;
-}
-
 static char *get_filename(char *filename)
 {
 #define DELIMITER	'/'
@@ -137,39 +81,234 @@ static char *get_filename(char *filename)
 	return (len < 1 || len > FILENAME_LEN) ? NULL : p;
 }
 
-static int server(int fd, struct sockaddr_in *addr, char *filename)
+static void *rx_init(char *arg)
 {
-	int d;
+	/* do nothing */
+	return rx_init;
+}
+
+static int rx_process(int fd, void *handle)
+{
 	FILE *fp;
-	long i, size, remain;
-	char *fn;
-	char buf[BLOCKSIZE];
+	int i, size, remain;
 	struct txf_header h;
-	struct sockaddr_in peer;
-	socklen_t peer_len;
+	char *fn, buf[BLOCKSIZE];
+	int rv = -1;
 
-	printf("* server\n");
-
-	/* file open */
-	if ((fn = get_filename(filename)) == NULL) {
-		printf("server: invalid file name\n");
+	/* receive header */
+	if (recv_block(fd, &h, sizeof(h)) < sizeof(h)) {
+		printf("rx_process: recv_block (header)\n");
 		goto fin0;
 	}
 
-	if ((fp = fopen(filename, "r")) == NULL) {
-		printf("server: fopen\n");
+	if (ntohl(h.magic) != MAGIC_SEND) {
+		printf("rx_process: invalid header\n");
 		goto fin0;
+	}
+
+	h.filename_term = '\0';
+	size = ntohl(h.filesize);
+	if ((fn = get_filename(h.filename)) == NULL) {
+		printf("rx_process: invalid file name\n");
+		goto fin0;
+	}
+
+	printf("%s, %d byte\n", fn, size);
+
+	/* receive file */
+	if ((fp = fopen(fn, "w")) == NULL) {
+		printf("rx_process: fopen\n");
+		goto fin0;
+	}
+
+	for (i = 0; i < size; i += BLOCKSIZE) {
+		remain = size - i;
+		if (remain > BLOCKSIZE)
+			remain = BLOCKSIZE;
+
+		if (recv_block(fd, buf, remain) < remain) {
+			printf("rx_process: recv_block (data)\n");
+			goto fin1;
+		}
+
+		if (fwrite(buf, remain, 1, fp) < 1) {
+			printf("rx_process: fwrite\n");
+			goto fin1;
+		}
+	}
+
+	/* send ack */
+	h.magic = htonl(MAGIC_RCVD);
+	if (send_block(fd, &h, sizeof(h)) < sizeof(h)) {
+		printf("rx_process: send_block (ack)\n");
+		goto fin1;
+	}
+
+	rv = 0;
+fin1:
+	fclose(fp);
+fin0:
+	return rv;
+}
+
+static void rx_finish(void *handle)
+{
+	/* do nothing */
+}
+
+static void *tx_init(char *filename)
+{
+	struct  txf_tx_workarea *wk;
+	FILE *fp;
+	long size;
+	char *fn;
+
+	wk = malloc(sizeof(*wk));
+	if (wk == NULL) {
+		printf("tx_init: malloc\n");
+		goto fin0;
+	}
+
+	/* file open */
+	if ((fn = get_filename(filename)) == NULL) {
+		printf("tx_init: invalid file name\n");
+		goto fin1;
+	}
+
+	if ((fp = fopen(filename, "r")) == NULL) {
+		printf("tx_init: fopen\n");
+		goto fin1;
 	}
 
 	fseek(fp, 0, SEEK_END);
 	size = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
 	if (size < 0 || size > MAX_FILE_SIZE) {
-		printf("server: invalid file size\n");
+		printf("tx_init: invalid file size\n");
+		goto fin2;
+	}
+
+	/* store file information to workarea */
+	wk->fp = fp;
+	wk->size = size;
+
+	memset(&wk->h, 0, sizeof(wk->h));
+	wk->h.magic = htonl(MAGIC_SEND);
+	wk->h.filesize = htonl(size);
+	strcpy(wk->h.filename, fn);
+
+	printf("%s, %ld byte\n", fn, size);
+	goto fin0;
+
+fin2:
+	fclose(fp);
+fin1:
+	free(wk);
+	wk = NULL;
+fin0:
+	return wk;
+}
+
+static int tx_process(int d, void *handle)
+{
+	struct  txf_tx_workarea *wk = handle;
+	long i, remain;
+	struct txf_header h;
+	char buf[BLOCKSIZE];
+	int rv = -1;
+
+	/* send header */
+	if (send_block(d, &wk->h, sizeof(wk->h)) < sizeof(wk->h)) {
+		printf("tx_process: send_block (header)\n");
+		goto fin0;
+	}
+
+	/* send file */
+	for (i = 0; i < wk->size; i += BLOCKSIZE) {
+		remain = wk->size - i;
+		if (remain > BLOCKSIZE)
+			remain = BLOCKSIZE;
+
+		if (fread(buf, remain, 1, wk->fp) < 1) {
+			printf("tx_process: fread\n");
+			goto fin0;
+		}
+
+		if (send_block(d, buf, remain) < remain) {
+			printf("tx_process: send_block (data)\n");
+			goto fin0;
+		}
+	}
+
+	/* receive ack */
+	if (recv_block(d, &h, sizeof(h)) < sizeof(h)) {
+		printf("tx_process: recv_block (ack)\n");
+		goto fin0;
+	}
+
+	if (ntohl(h.magic) != MAGIC_RCVD) {
+		printf("tx_process: invalid ack\n");
+		goto fin0;
+	}
+
+	rv = 0;
+fin0:
+	return rv;
+}
+
+static void tx_finish(void *handle)
+{
+	struct txf_tx_workarea *wk = handle;
+
+	fclose(wk->fp);
+	free(handle);
+}
+
+static int client(int fd, struct sockaddr_in *addr, char *arg, struct txf_workingset *work)
+{
+	void *handle;
+	int rv = -1;
+
+	printf("* client\n");
+
+	if ((handle = (*work->init)(arg)) == NULL) {
+		printf("client: init\n");
+		goto fin0;
+	}
+
+	/* connect to server */
+	if (connect(fd, (struct sockaddr *)addr, sizeof(*addr)) < 0) {
+		printf("client: connect\n");
 		goto fin1;
 	}
 
-	printf("%s, %ld byte\n", fn, size);
+	printf("connected to %s\n", inet_ntoa(addr->sin_addr));
+
+	if ((*work->process)(fd, handle)) {
+		printf("client: process\n");
+		goto fin1;
+	}
+
+	rv = 0;
+fin1:
+	(*work->finish)(handle);
+fin0:
+	return rv;
+}
+
+static int server(int fd, struct sockaddr_in *addr, char *arg, struct txf_workingset *work)
+{
+	void *handle;
+	int d, rv = -1;
+	struct sockaddr_in peer;
+	socklen_t peer_len;
+
+	printf("* server\n");
+
+	if ((handle = (*work->init)(arg)) == NULL) {
+		printf("server: init\n");
+		goto fin0;
+	}
 
 	/* wait for connect */
 	if (bind(fd, (struct sockaddr *)addr, sizeof(*addr)) < 0) {
@@ -190,59 +329,28 @@ static int server(int fd, struct sockaddr_in *addr, char *filename)
 
 	printf("connected from %s\n", inet_ntoa(peer.sin_addr));
 
-	/* send header */
-	memset(&h, 0, sizeof(h));
-	h.magic = htonl(MAGIC_SEND);
-	h.filesize = htonl(size);
-	strcpy(h.filename, fn);
-
-	if (send_block(d, &h, sizeof(h)) < sizeof(h)) {
-		printf("server: send_block (header)\n");
+	if ((*work->process)(d, handle)) {
+		printf("server: process\n");
 		goto fin2;
 	}
 
-	/* send file */
-	for (i = 0; i < size; i += BLOCKSIZE) {
-		remain = size - i;
-		if (remain > BLOCKSIZE)
-			remain = BLOCKSIZE;
-
-		if (fread(buf, remain, 1, fp) < 1) {
-			printf("server: fread\n");
-			goto fin2;
-		}
-
-		if (send_block(d, buf, remain) < remain) {
-			printf("server: send_block (data)\n");
-			goto fin2;
-		}
-	}
-
-	/* receive ack */
-	if (recv_block(d, &h, sizeof(h)) < sizeof(h)) {
-		printf("server: recv_block (ack)\n");
-		goto fin2;
-	}
-
-	if (ntohl(h.magic) != MAGIC_RCVD) {
-		printf("server: invalid ack\n");
-		goto fin2;
-	}
-
+	rv = 0;
 fin2:
 	close(d);
 fin1:
-	fclose(fp);
+	(*work->finish)(handle);
 fin0:
-	return 0;
+	return rv;
 }
 
 int main(int argc, char *argv[])
 {
-	int fd;
+	int fd, tx_file, rx_server, port;
 	struct sockaddr_in addr;
+	struct txf_workingset rx_set = {rx_init, rx_process, rx_finish};
+	struct txf_workingset tx_set = {tx_init, tx_process, tx_finish};
 
-	if (argc < 3) {
+	if (argc < 3 || argc > 4) {
 		printf("%s [ipv4-addr] [port] [(filename to send)]\n",
 		       argv[0]);
 		goto fin0;
@@ -253,15 +361,37 @@ int main(int argc, char *argv[])
 		goto fin0;
 	}
 
+	/* default: tx-server/rx-client mode */
+	port = atoi(argv[2]);
+	tx_file = (argc == 4) ? 1 : 0;
+	rx_server = 0;
+
+	/* if port is negative, rx-server/tx-client mode */
+	if (*argv[2] == '-') {
+		port = -port;
+		tx_file ^= 1;
+		rx_server = 1;
+	}
+
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = inet_addr(argv[1]);
-	addr.sin_port = htons(atoi(argv[2]));
+	addr.sin_port = htons(port);
 
-	if (argc == 3)
-		client(fd, &addr);
-	else if (argc == 4)
-		server(fd, &addr, argv[3]);
+	switch ((rx_server << 1) | tx_file) {
+	case 0:
+		client(fd, &addr, NULL, &rx_set);
+		break;
+	case 1:
+		server(fd, &addr, argv[3], &tx_set);
+		break;
+	case 2:
+		client(fd, &addr, argv[3], &tx_set);
+		break;
+	case 3:
+		server(fd, &addr, NULL, &rx_set);
+		break;
+	}
 
 	close(fd);
 fin0:
