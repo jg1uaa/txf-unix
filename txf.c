@@ -83,7 +83,7 @@ static char *get_filename(char *filename)
 
 static void *rx_init(char *arg)
 {
-	/* do noting */
+	/* do nothing */
 	return rx_init;
 }
 
@@ -258,7 +258,7 @@ fin0:
 
 static void tx_finish(void *handle)
 {
-	struct  txf_tx_workarea *wk = handle;
+	struct txf_tx_workarea *wk = handle;
 
 	fclose(wk->fp);
 	free(handle);
@@ -309,7 +309,7 @@ static int server(int fd, struct sockaddr_in *addr, char *arg, struct txf_workin
 		printf("server: init\n");
 		goto fin0;
 	}
-	
+
 	/* wait for connect */
 	if (bind(fd, (struct sockaddr *)addr, sizeof(*addr)) < 0) {
 		printf("server: bind\n");
