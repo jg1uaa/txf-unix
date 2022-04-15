@@ -316,6 +316,12 @@ static int server(int fd, struct sockaddr_in *addr, char *arg, struct txf_workin
 		goto fin1;
 	}
 
+	peer_len = sizeof(peer);
+	if (getsockname(fd, (struct sockaddr *)&peer, &peer_len) >= 0) {
+		printf("address %s port %d\n",
+		       inet_ntoa(peer.sin_addr), ntohs(peer.sin_port));
+	}
+
 	if (listen(fd, 1) < 0) {
 		printf("server: listen\n");
 		goto fin1;
@@ -327,7 +333,8 @@ static int server(int fd, struct sockaddr_in *addr, char *arg, struct txf_workin
 		goto fin1;
 	}
 
-	printf("connected from %s\n", inet_ntoa(peer.sin_addr));
+	printf("connected from %s port %d\n",
+	       inet_ntoa(peer.sin_addr), ntohs(peer.sin_port));
 
 	if ((*work->process)(d, handle)) {
 		printf("server: process\n");
