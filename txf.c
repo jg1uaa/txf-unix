@@ -299,7 +299,7 @@ fin0:
 static int server(int fd, struct sockaddr_in *addr, char *arg, struct txf_workingset *work)
 {
 	void *handle;
-	int d, rv = -1;
+	int d, en = 1, rv = -1;
 	struct sockaddr_in peer;
 	socklen_t peer_len;
 
@@ -311,6 +311,7 @@ static int server(int fd, struct sockaddr_in *addr, char *arg, struct txf_workin
 	}
 
 	/* wait for connect */
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &en, sizeof(en));
 	if (bind(fd, (struct sockaddr *)addr, sizeof(*addr)) < 0) {
 		printf("server: bind\n");
 		goto fin1;
