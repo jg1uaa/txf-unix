@@ -6,4 +6,4 @@ txf: txf.c
 	$(CC) -O2 -Wall $< -o $@
 
 clean:
-	$(RM) -f $(ALL)
+	rm -f $(ALL)
