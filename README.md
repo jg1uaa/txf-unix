@@ -3,16 +3,17 @@
 ---
 ## Description
 
-A simple file transfer program for IPv4-based private LAN.
+A simple file transfer program for private LAN.
 
-**Not intended to be used with public or IPv6-based network.**
+**Not intended to be used with public network.**
 
 
 ## Usage
 
 ```
 $ txf
-txf [ipv4-addr] [port] [(filename to send)]
+usage:  ./txf -p [client port] -l [IP address]
+        ./txf -P [server port] -l [IP address]  -f [filename]
 $
 ```
 
@@ -20,64 +21,58 @@ $
 
 #### Server (sender)
 
-`[ipv4-addr]` is IPv4 address of server.
+`[IP address]` is IP address of server.
 
-`[(filename to send)]` is required.
+`[filename]` is required.
 
 Run server first, waiting for connection from client.
 
 ```
-$ txf 192.168.0.1 9999 sendfile
+$ txf -P 9999 -l 192.168.0.1 -f sendfile
 ```
 
 After file transfer is completed, server will stop.
 
 #### Client (receiver)
 
-`[ipv4-addr]` is IPv4 address of server.
+`[IP address]` is IP address of server.
 
-`[(filename to send)]` is *not* required.
+`[filename]` is *not* required.
 
 
 ```
-$ txf 192.168.0.1 9999
+$ txf -p 9999 -l 192.168.0.1
 ```
 
 ### Example: Put file to server
 
 #### Server (receiver)
 
-`[ipv4-addr]` is IPv4 address of server.
+`[IP address]` is IP address of server.
 
-`[port]` is negative port value.
-
-`[(filename to send)]` is *not* required.
+`[filename]` is *not* required.
 
 
 Run server first, waiting for connection from client.
 
 ```
-$ txf 192.168.0.1 -9999
+$ txf -P 9999 -l 192.168.0.1
 ```
 
 After file transfer is completed, server will stop.
 
 #### Client (sender)
 
-`[ipv4-addr]` is IPv4 address of server.
+`[IP address]` is IP address of server.
 
-`[port]` is negative port value.
-
-`[(filename to send)]` is required.
+`[filename]` is required.
 
 ```
-$ txf 192.168.0.1 -9999 sendfile
+$ txf -p 9999 -l 192.168.0.1 -f sendfile
 ```
 
 ## Limitation
 
-- no support IPv6
-- no support name resolution
 - no support large file transfer, up to 0x7fffffff bytes
 - no support long file name, up to 20 ASCII characters
 - no support timestamp
