@@ -112,6 +112,18 @@ static char *get_filename(char *filename)
 	return (len < 1 || len > FILENAME_LEN) ? NULL : p;
 }
 
+static void wait_magic(int fd, void *header, uint32_t magic)
+{
+	int i;
+	unsigned char *p = header;
+
+	for (i = 0; i < sizeof(magic); i++) {
+		if (recv_block(fd, &p[i], sizeof(*p)) != sizeof(*p) ||
+		    p[i] != (unsigned char)(magic >> (8 * (3 - i))))
+			i = 0;
+	}
+}
+
 static void *rx_init(char *arg)
 {
 	/* do nothing */
@@ -126,14 +138,13 @@ static int rx_process(int fd, void *handle)
 	char *fn, buf[MAX_BLOCKSIZE];
 	int rv = -1;
 
-	/* receive header */
-	if (recv_block(fd, &h, sizeof(h)) < sizeof(h)) {
-		printf("rx_process: recv_block (header)\n");
-		goto fin0;
-	}
+	/* wait for magic */
+	wait_magic(fd, &h, MAGIC_SEND);
 
-	if (ntohl(h.magic) != MAGIC_SEND) {
-		printf("rx_process: invalid header\n");
+	/* receive header */
+	remain = sizeof(h) - sizeof(h.magic);
+	if (recv_block(fd, &h.filesize, remain) < remain) {
+		printf("rx_process: recv_block (header)\n");
 		goto fin0;
 	}
 
@@ -276,14 +287,13 @@ static int tx_process(int d, void *handle)
 		}
 	}
 
-	/* receive ack */
-	if (recv_block(d, &h, sizeof(h)) < sizeof(h)) {
-		printf("tx_process: recv_block (ack)\n");
-		goto fin0;
-	}
+	/* wait for magic */
+	wait_magic(d, &h, MAGIC_RCVD);
 
-	if (ntohl(h.magic) != MAGIC_RCVD) {
-		printf("tx_process: invalid ack\n");
+	/* receive ack */
+	remain = sizeof(h) - sizeof(h.magic);
+	if (recv_block(d, &h.filesize, remain) < remain) {
+		printf("tx_process: recv_block (ack)\n");
 		goto fin0;
 	}
 
@@ -403,31 +413,11 @@ static bool set_nonblock(int d, bool nonblock)
 		      (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK)) < 0);
 }
 
-static void wait_for_stable(int fd)
-{
-	char buf;
-	int i;
-
-	if (set_nonblock(fd, true))
-		return;
-
-	/* discard garbage (silent 10msec required) */
-	for (i = 0; i < 10; ) {
-		if (read(fd, &buf, sizeof(buf)) == -1) {
-			if (errno == EAGAIN) {
-				usleep(1000);
-				i++;
-			}
-		} else {
-			i = 0;
-		}
-	}
-}
-
 static int open_serial(void)
 {
 	int fd;
 	struct termios t;
+	char c;
 
 	if ((fd = open(serdev,
 		       O_RDWR | O_NOCTTY | O_EXCL | O_NONBLOCK)) < 0)
@@ -448,9 +438,12 @@ static int open_serial(void)
 	tcflush(fd, TCIOFLUSH);
 	tcsetattr(fd, TCSANOW, &t);
 
-	wait_for_stable(fd);
 	if (set_nonblock(fd, false))
 		goto fin1;
+
+	// send dummy data for stable
+	c = 0;
+	send_block(fd, &c, sizeof(c));
 
 	goto fin0;
 
@@ -697,7 +690,7 @@ int main(int argc, char *argv[])
 		printf("usage:	%s -p [client port] -l [IP address]\n",
 		       argv[0]);
 		printf("	%s -P [server port] -l [IP address] "
-		       " -f [filename]\n", argv[0]);
+		       "-f [filename]\n", argv[0]);
 		goto fin0;
 	}
 
